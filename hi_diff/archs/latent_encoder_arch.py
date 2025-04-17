@@ -37,37 +37,48 @@ class MLP(nn.Module):
 
         return x
 
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super(DepthwiseSeparableConv, self).__init__()
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size, stride, padding, groups=in_channels)
+        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        return x
+
 @ARCH_REGISTRY.register()
 class latent_encoder_gelu(nn.Module):
-
     def __init__(self, in_chans=6, embed_dim=64, block_num=4, stage=1, group=4, patch_expansion=0.5, channel_expansion=4):
         super(latent_encoder_gelu, self).__init__()
 
-        assert in_chans == int(6//stage), "in chanel size is wrong"
+        assert in_chans == int(6 // stage), "in channel size is wrong"
 
         self.group = group
 
         self.pixel_unshuffle = nn.PixelUnshuffle(4)
         self.conv1 = nn.Sequential(
-                nn.Conv2d(in_chans*16, embed_dim, 3, 1, 1), 
-                nn.GELU(),
-                )
+            DepthwiseSeparableConv(in_chans * 16, embed_dim, 3, 1, 1),
+            nn.GELU(),
+        )
 
         self.blocks = nn.ModuleList()
         for i in range(block_num):
             block = nn.Sequential(
-                nn.Conv2d(embed_dim, embed_dim, 3, 1, 1), 
+                DepthwiseSeparableConv(embed_dim, embed_dim, 3, 1, 1),
                 nn.GELU(),
-                nn.Conv2d(embed_dim, embed_dim, 3, 1, 1))
+                DepthwiseSeparableConv(embed_dim, embed_dim, 3, 1, 1),
+            )
             self.blocks.append(block)
 
-        self.conv2 = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
+        self.conv2 = DepthwiseSeparableConv(embed_dim, embed_dim, 3, 1, 1)
         self.pool = nn.AdaptiveAvgPool2d((group, group))
-        self.mlp = MLP(num_patches=group*group, embed_dims=embed_dim, patch_expansion=patch_expansion, channel_expansion=channel_expansion)
+        self.mlp = MLP(num_patches=group * group, embed_dims=embed_dim, patch_expansion=patch_expansion, channel_expansion=channel_expansion)
         self.end = nn.Sequential(
-                nn.Linear(embed_dim, embed_dim*4),
-                nn.GELU(),)
-        
+            nn.Linear(embed_dim, embed_dim * 4),
+            nn.GELU(),
+        )
 
     def forward(self, inp_img, gt=None):
         if gt is not None:
@@ -80,49 +91,49 @@ class latent_encoder_gelu(nn.Module):
         for block in self.blocks:
             x = block(x) + x
         x = self.pool(self.conv2(x))
-        x = rearrange(x, 'b c h w-> b (h w) c')
+        x = rearrange(x, 'b c h w -> b (h w) c')
         x = self.mlp(x)
         x = self.end(x)
         return x
 
 @ARCH_REGISTRY.register()
 class latent_encoder_lrelu(nn.Module):
-
     def __init__(self, in_chans=6, embed_dim=64, block_num=4, stage=1, group=4, patch_expansion=0.5, channel_expansion=4):
         super(latent_encoder_lrelu, self).__init__()
 
-        assert in_chans == int(6//stage), "in chanel size is wrong"
+        assert in_chans == int(6 // stage), "in channel size is wrong"
 
         self.group = group
 
         self.pixel_unshuffle = nn.PixelUnshuffle(4)
         self.conv1 = nn.Sequential(
-                nn.Conv2d(in_chans*16, embed_dim, 3, 1, 1), 
-                nn.LeakyReLU(0.1, True),
-                )
+            DepthwiseSeparableConv(in_chans * 16, embed_dim, 3, 1, 1),
+            nn.LeakyReLU(0.1, True),
+        )
 
         self.blocks = nn.ModuleList()
         for i in range(block_num):
             block = nn.Sequential(
-                nn.Conv2d(embed_dim, embed_dim, 3, 1, 1), 
+                DepthwiseSeparableConv(embed_dim, embed_dim, 3, 1, 1),
                 nn.LeakyReLU(0.1, True),
-                nn.Conv2d(embed_dim, embed_dim, 3, 1, 1))
+                DepthwiseSeparableConv(embed_dim, embed_dim, 3, 1, 1),
+            )
             self.blocks.append(block)
 
         self.conv2 = nn.Sequential(
-                nn.Conv2d(embed_dim, embed_dim * 2, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.1, True),
-                nn.Conv2d(embed_dim * 2, embed_dim * 2, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.1, True),
-                nn.Conv2d(embed_dim * 2, embed_dim * 4, kernel_size=3, padding=1),
-                nn.LeakyReLU(0.1, True),
+            DepthwiseSeparableConv(embed_dim, embed_dim * 2, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, True),
+            DepthwiseSeparableConv(embed_dim * 2, embed_dim * 2, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, True),
+            DepthwiseSeparableConv(embed_dim * 2, embed_dim * 4, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.1, True),
         )
         self.pool = nn.AdaptiveAvgPool2d((group, group))
-        self.mlp = MLP(num_patches=group*group, embed_dims=embed_dim*4, patch_expansion=patch_expansion, channel_expansion=channel_expansion)
+        self.mlp = MLP(num_patches=group * group, embed_dims=embed_dim * 4, patch_expansion=patch_expansion, channel_expansion=channel_expansion)
         self.end = nn.Sequential(
-                nn.Linear(embed_dim*4, embed_dim*4),
-                nn.LeakyReLU(0.1, True),)
-        
+            nn.Linear(embed_dim * 4, embed_dim * 4),
+            nn.LeakyReLU(0.1, True),
+        )
 
     def forward(self, inp_img, gt=None):
         if gt is not None:
@@ -135,7 +146,7 @@ class latent_encoder_lrelu(nn.Module):
         for block in self.blocks:
             x = block(x) + x
         x = self.pool(self.conv2(x))
-        x = rearrange(x, 'b c h w-> b (h w) c')
+        x = rearrange(x, 'b c h w -> b (h w) c')
         x = self.mlp(x)
         x = self.end(x)
         return x
